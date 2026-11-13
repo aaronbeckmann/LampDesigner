@@ -1,32 +1,30 @@
-mod app;
-mod bulb;
-mod bvh;
-mod checks;
-mod cli;
-mod design;
-mod export;
-mod geometry;
-mod image_out;
-mod material;
-mod mesh;
-mod project;
-mod quality;
-mod random;
-mod render;
-mod scene;
-mod section;
-mod sim;
-
-use eframe::egui;
+// Release builds are a windowed app (no console window behind the GUI).
+// Command-line use: `lampdesigner-cli`, or `start.ps1 <command>`.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    if let Some(code) = cli::run(&args) {
-        std::process::exit(code);
+    if args.len() > 1 {
+        // CLI arguments given to the windowed exe: print into the calling console if there is one
+        attach_parent_console();
+        if let Some(code) = lampdesigner::cli::run(&args) {
+            std::process::exit(code);
+        }
     }
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1560.0, 940.0]).with_title("Lampdesigner"),
-        ..Default::default()
-    };
-    eframe::run_native("Lampdesigner", options, Box::new(|cc| Ok(Box::new(app::App::new(cc)))))
+    lampdesigner::run_gui()
 }
+
+#[cfg(windows)]
+fn attach_parent_console() {
+    extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: plain Win32 call without pointers; failure (no parent console) is harmless.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}

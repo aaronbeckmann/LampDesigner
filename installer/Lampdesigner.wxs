@@ -1,0 +1,70 @@
+<!--
+  Per-user MSI (no admin rights): installs to %LOCALAPPDATA%\Programs\Lampdesigner,
+  adds Start menu and desktop shortcuts. Built by installer\build.ps1.
+  UpgradeCode must never change: it lets new versions replace old ones.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Lampdesigner"
+           Manufacturer="Aaron Beckmann"
+           Version="$(var.Version)"
+           UpgradeCode="3A04F3C8-C731-4B0D-9A4E-16B30D04C447"
+           Scope="perUser"
+           Language="1033">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Lampdesigner is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/aaronbeckmann/LampDesigner" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Icon Id="AppIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)lampdesigner.ico" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Lampdesigner" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Lampdesigner">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="GuiExe" Guid="BACFC532-8673-4566-A070-FE42794E400D">
+        <File Id="LampdesignerExe" Source="$(var.BinDir)\lampdesigner.exe" />
+        <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="gui" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      </Component>
+      <Component Id="CliExe" Guid="59D14454-82EB-4222-92E5-36A77E2A4829">
+        <File Id="LampdesignerCliExe" Source="$(var.BinDir)\lampdesigner-cli.exe" />
+        <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="cli" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="Readme" Guid="07E1658A-032E-4275-9255-6A65A0DEB807">
+        <File Id="ReadmeMd" Source="$(var.RootDir)\README.md" />
+        <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="readme" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenuLampdesigner"
+                  Name="Lampdesigner"
+                  Description="Design 3D-printable lampshades"
+                  Target="[INSTALLFOLDER]lampdesigner.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="startmenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut">
+        <Shortcut Id="DesktopLampdesigner"
+                  Name="Lampdesigner"
+                  Description="Design 3D-printable lampshades"
+                  Target="[INSTALLFOLDER]lampdesigner.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="desktop" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+  </Package>
+</Wix>

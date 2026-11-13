@@ -3,13 +3,23 @@
 Parametric, 3D-printable lampshades for the **IKEA GENNAKER** table lamp base (or any E27 socket),
 with a physically based light/heat simulation for Bambu Lab filaments and **3MF export for Bambu Studio**.
 
+## Install (Windows)
+
+Download `Lampdesigner-<version>-setup.exe` from the [releases](https://github.com/aaronbeckmann/LampDesigner/releases) and run it. It installs for your user only, without admin rights, into `%LOCALAPPDATA%\Programs\Lampdesigner`, with Start menu and desktop shortcuts. You can uninstall it under *Settings → Apps*.
+
+The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
+
+## Build from source
+
 ```
-cargo run --release
+cargo run --release            # GUI
+.\start.ps1                    # builds if needed and starts the GUI
+.\installer\build.ps1          # builds dist\Lampdesigner-<version>-setup.exe (needs WiX 5)
 ```
 
 ## Features
 
-- **Random generator:** themes are Minimal, Organic, Floral, Geometric, Crystal, Waves, Fluted/Art Deco, Twisted and Surprise. Every design is checked for bulb clearance, overhang (≤ 50°), wall thickness (≥ 0.8 mm), bulb insertion, mount and bed size, and re-rolled if it fails. Seeds are reproducible, and ◀ Back walks the history. Your mount, bulb and material are kept. CLI: `lampdesigner random organic 42 out.png --save design.json`.
+- **Random generator:** themes are Minimal, Organic, Floral, Geometric, Crystal, Waves, Fluted/Art Deco, Twisted and Surprise. Every design is checked for bulb clearance, overhang (≤ 50°), wall thickness (≥ 0.8 mm), bulb insertion, mount and bed size, and re-rolled if it fails. Seeds are reproducible, and ◀ Back walks the history. Your mount, bulb and material are kept. CLI: `lampdesigner-cli random organic 42 out.png --save design.json`.
 - **Shape:** height, and a silhouette that is either a bulge curve (bottom/top radius plus a bump or waist) or a free curve through 6 radii. Polygon cross-section with twist.
 - **Folds & flow:** lobes/folds with depth, growth toward the top, sharpness, twist and meander. Use 2–3 folds for a swaying organic column, 8–12 for a flowing crown. Optional wavy (scalloped) top rim.
 - **Texture:** ridges or narrow grooves. They can follow the fold flow or have their own twist. Also cross-rib lattice, horizontal or spiral waves, smooth rim bands.
@@ -27,7 +37,7 @@ cargo run --release
   - Results: light output (up / down / through the wall), shade glow in cd/m², bulb hotspot visibility, light pool on the table and wall, and a polar light distribution.
   - Estimated wall and mount temperatures, checked against each filament's softening point.
 - **Views:** *Shape* (fast clay render of the geometry), lamp on in a dark room, daylight, and false-colour maps for wall thickness, overhang and temperature.
-- **Section / cut view:** ✂ Section cuts the 3D view at any X, Y or Z position. Cut faces are hatched: orange for the shade, blue for the mount, grey for the lamp. *📐 Analysis* opens the 2D section with a mm grid, bulb outline and bulb gap, wall thickness (min / mean / max, thinnest spot marked), diameters for Z cuts, a thickness graph along the cut, and a hover readout of coordinates and local wall. CLI: `lampdesigner section <project> z 80 cut.png`.
+- **Section / cut view:** ✂ Section cuts the 3D view at any X, Y or Z position. Cut faces are hatched: orange for the shade, blue for the mount, grey for the lamp. *📐 Analysis* opens the 2D section with a mm grid, bulb outline and bulb gap, wall thickness (min / mean / max, thinnest spot marked), diameters for Z cuts, a thickness graph along the cut, and a hover readout of coordinates and local wall. CLI: `lampdesigner-cli section <project> z 80 cut.png`.
 - **Light simulation switch:** untick *light* in the Simulation panel to skip photon tracing for quick shape work. The Shape, Daylight, Thickness and Overhang views still work.
 - **Quality:** Draft to Ultra refines the preview mesh (up to 3×) and anti-aliasing. The photon count stays the same. *Save image* exports PNGs up to 5120 px wide.
 - **Compare materials:** simulates all four filaments with the same exposure, side by side.
@@ -36,10 +46,14 @@ cargo run --release
 
 ## CLI
 
+The command-line tool is `lampdesigner-cli.exe`. It's installed next to the app, or use `.\start.ps1 <command>` when building from source.
+
 ```
-lampdesigner export  <project> <out.3mf> [--coarse]
-lampdesigner simulate [project] [--quality q]   # stats for all materials
-lampdesigner render  <project> <out.png> [shape|night|day|thickness|overhang|temperature] [--quality q] [--size WxH]
+lampdesigner-cli export   <project> <out.3mf> [--coarse]
+lampdesigner-cli simulate [project] [--quality q]   # stats for all materials
+lampdesigner-cli render   <project> <out.png> [shape|night|day|thickness|overhang|temperature] [--quality q] [--size WxH]
+lampdesigner-cli section  <project> <x|y|z> <pos mm> [out.png] [--keep-below]
+lampdesigner-cli random   <theme> <seed> [out.png] [--save project.json]
 ```
 
 `<project>` is a saved `.json`, `default`, or a preset such as `"preset:Flowing crown"`.

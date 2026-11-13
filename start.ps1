@@ -6,13 +6,14 @@ $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
 $exe = Join-Path $PSScriptRoot 'target\release\lampdesigner.exe'
+$cli = Join-Path $PSScriptRoot 'target\release\lampdesigner-cli.exe'
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     if (-not (Test-Path $exe)) {
         Write-Error 'Rust (cargo) is not installed and no built app was found. Install Rust from https://rustup.rs'
     }
 } else {
-    $needsBuild = -not (Test-Path $exe)
+    $needsBuild = -not ((Test-Path $exe) -and (Test-Path $cli))
     if (-not $needsBuild) {
         $exeTime = (Get-Item $exe).LastWriteTime
         $newer = Get-ChildItem -Path 'src', 'Cargo.toml' -Recurse -File |
@@ -27,8 +28,8 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 }
 
 if ($args.Count -gt 0) {
-    # CLI mode: run in this console and wait
-    & $exe @args
+    # CLI mode: console tool, runs in this console and waits
+    & $cli @args
     exit $LASTEXITCODE
 } else {
     # GUI mode: start detached so the console can be closed

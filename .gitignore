@@ -1,3 +1,5 @@
 /target
+/dist
+*.wixpdb
 *.3mf
 *.png

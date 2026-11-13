@@ -1,0 +1,25 @@
+<!--
+  Setup .exe (WiX Burn bundle) wrapping Lampdesigner.msi with a standard
+  install dialog and a "Launch" button. Per-user: no admin rights needed.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="Lampdesigner"
+          Manufacturer="Aaron Beckmann"
+          Version="$(var.Version)"
+          UpgradeCode="477B2C8E-BABC-4671-9A1B-1EBC236E3825"
+          AboutUrl="https://github.com/aaronbeckmann/LampDesigner"
+          IconSourceFile="$(sys.SOURCEFILEDIR)lampdesigner.ico">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+          Theme="hyperlinkLicense"
+          LicenseUrl="https://github.com/aaronbeckmann/LampDesigner"
+          LaunchTarget="[LocalAppDataFolder]Programs\Lampdesigner\lampdesigner.exe"
+          SuppressOptionsUI="yes"
+          ShowVersion="yes" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage SourceFile="$(var.MsiPath)" />
+    </Chain>
+  </Bundle>
+</Wix>
