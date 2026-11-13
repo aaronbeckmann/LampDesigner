@@ -1,8 +1,10 @@
 [package]
 name = "lampdesigner"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Parametric 3D-printable lampshade designer with light simulation and 3MF export"
+license = "MIT"
+repository = "https://github.com/aaronbeckmann/LampDesigner"
 
 [dependencies]
 eframe = "0.31"

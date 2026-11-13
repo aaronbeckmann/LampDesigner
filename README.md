@@ -67,6 +67,10 @@ Projects are saved as JSON from the GUI (Save/Open).
 3. Set *Wall loops* so the loops fill the wall: about 3 for 1.2 mm with a 0.4 mm nozzle. For a vase-like finish use a thinner wall.
 4. **Use LED bulbs only.** PLA softens at about 55–57 °C. If the washer mount touches the bulb cap, PETG is safer.
 
+## License
+
+[MIT](LICENSE) © 2026 Aaron Beckmann
+
 ## Model notes / limitations
 
 - Optical coefficients are estimates calibrated to typical behaviour, e.g. about 18 % diffuse transmission for 1 mm white PLA. Real filament colours and batches vary. Use the results to compare designs and materials, not as lab values.

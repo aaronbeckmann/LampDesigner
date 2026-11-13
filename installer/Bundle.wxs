@@ -13,7 +13,7 @@
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
           Theme="hyperlinkLicense"
-          LicenseUrl="https://github.com/aaronbeckmann/LampDesigner"
+          LicenseUrl="https://github.com/aaronbeckmann/LampDesigner/blob/main/LICENSE"
           LaunchTarget="[LocalAppDataFolder]Programs\Lampdesigner\lampdesigner.exe"
           SuppressOptionsUI="yes"
           ShowVersion="yes" />

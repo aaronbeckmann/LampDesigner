@@ -17,8 +17,13 @@
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
     <Icon Id="AppIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)lampdesigner.ico" />
 
-    <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="INSTALLFOLDER" Name="Lampdesigner" />
+    <!-- A strict per-user MSI does not redirect ProgramFiles to the user
+         profile, so install explicitly into %LOCALAPPDATA%\Programs, which
+         every user can write without admin rights. -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Lampdesigner" />
+      </Directory>
     </StandardDirectory>
 
     <Feature Id="Main" Title="Lampdesigner">
@@ -32,6 +37,8 @@
         <File Id="LampdesignerExe" Source="$(var.BinDir)\lampdesigner.exe" />
         <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="gui" Type="integer" Value="1" KeyPath="yes" />
         <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+        <!-- only removed if empty (other apps use it too) -->
+        <RemoveFolder Id="RemoveUserPrograms" Directory="UserProgramsFolder" On="uninstall" />
       </Component>
       <Component Id="CliExe" Guid="59D14454-82EB-4222-92E5-36A77E2A4829">
         <File Id="LampdesignerCliExe" Source="$(var.BinDir)\lampdesigner-cli.exe" />
@@ -40,6 +47,10 @@
       <Component Id="Readme" Guid="07E1658A-032E-4275-9255-6A65A0DEB807">
         <File Id="ReadmeMd" Source="$(var.RootDir)\README.md" />
         <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="readme" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="License" Guid="6D2F0B47-9C1E-4B8A-A3D5-7E2C41F09B6E">
+        <File Id="LicenseTxt" Source="$(var.RootDir)\LICENSE" Name="LICENSE.txt" />
+        <RegistryValue Root="HKCU" Key="Software\Lampdesigner" Name="license" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 
