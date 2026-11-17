@@ -156,10 +156,21 @@ fn blank(cur: &Design) -> Design {
         ring_width: cur.ring_width,
         mount_thickness: cur.mount_thickness,
         sleeve_height: cur.sleeve_height,
+        sleeve_windows: cur.sleeve_windows,
+        sleeve_strut_w: cur.sleeve_strut_w,
+        sleeve_band: cur.sleeve_band,
         ledge: cur.ledge,
         ledge_d: cur.ledge_d,
         ledge_h: cur.ledge_h,
         ledge_chamfer: cur.ledge_chamfer,
+        vase_mode: cur.vase_mode,
+        glue_gap: cur.glue_gap,
+        glue_ledge_width: cur.glue_ledge_width,
+        glue_ledge_h: cur.glue_ledge_h,
+        split_parts: cur.split_parts,
+        split_joint: cur.split_joint,
+        split_overlap: cur.split_overlap,
+        split_gap: cur.split_gap,
         spokes: cur.spokes,
         spoke_width: cur.spoke_width,
         profile_kind: ProfileKind::Spline,
@@ -326,8 +337,77 @@ fn roll(theme: Theme, r: &mut R, cur: &Design) -> Design {
     d
 }
 
+/// Generator constraints chosen by the user.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GenOptions {
+    /// Largest allowed overhang from vertical (deg).
+    pub max_overhang: f32,
+    /// Exact shade height (mm), or `None` to let the theme choose.
+    pub height: Option<f32>,
+    /// Exact largest outer diameter of the shade (mm), or `None`.
+    pub width: Option<f32>,
+}
+
+impl Default for GenOptions {
+    fn default() -> Self {
+        GenOptions { max_overhang: 50.0, height: None, width: None }
+    }
+}
+
+/// Largest outer diameter of the shade (mm), sampled from the design.
+pub fn max_diameter(d: &Design) -> f32 {
+    let nt = (d.angular_detail() * 6).clamp(240, 960);
+    let nz = 80;
+    let mut r: f32 = 0.0;
+    for iz in 0..nz {
+        let s = iz as f32 / (nz - 1) as f32;
+        for it in 0..nt {
+            r = r.max(d.radii(std::f32::consts::TAU * it as f32 / nt as f32, s).1);
+        }
+    }
+    2.0 * r
+}
+
+/// Scales the silhouette until the largest outer diameter equals `width`.
+/// Surface features (ribs, folds, waves) keep their size in mm, so a few
+/// iterations are needed.
+fn fit_width(d: &mut Design, width: f32) {
+    for _ in 0..6 {
+        let k = width / max_diameter(d).max(1.0);
+        if (k - 1.0).abs() < 0.001 {
+            break;
+        }
+        for r in &mut d.spline {
+            *r *= k;
+        }
+        d.r_bottom *= k;
+        d.r_top *= k;
+        d.bulge *= k;
+    }
+}
+
+/// Applies the fixed height and width (if any).
+fn apply_size(d: &mut Design, opts: &GenOptions) {
+    if let Some(h) = opts.height {
+        d.height = h;
+    }
+    d.sanitize();
+    if let Some(w) = opts.width {
+        fit_width(d, w);
+    }
+}
+
+/// Small headroom below the user's limit (overhang is measured at export
+/// resolution, which resolves rib flanks at least as finely as the preview).
+const OVERHANG_MARGIN: f32 = 0.5;
+
 /// Problems with a design (empty = printable and fits).
-pub fn evaluate(p: &Project) -> Vec<String> {
+pub fn evaluate(p: &Project, max_overhang: f32) -> Vec<String> {
+    evaluate_scene(p, max_overhang).0
+}
+
+/// Problems plus the measured overhang (deg).
+fn evaluate_scene(p: &Project, max_overhang: f32) -> (Vec<String>, f32) {
     let d = &p.design;
     let (nt, nz) = preview_res(d, 0.6);
     let sc = scene::build(d, &p.bulb, &p.lamp, nt, nz);
@@ -335,8 +415,12 @@ pub fn evaluate(p: &Project) -> Vec<String> {
     if sc.min_clearance < 10.0 {
         bad.push(format!("bulb clearance {:.0} mm", sc.min_clearance));
     }
-    if sc.max_overhang > 50.0 {
-        bad.push(format!("overhang {:.0}°", sc.max_overhang));
+    // overhang depends strongly on resolution (rib flanks): measure it on the
+    // export grid, straight from the design
+    let (ent, enz) = crate::geometry::export_res(d, false);
+    let overhang = crate::geometry::max_overhang(d, ent, enz);
+    if overhang > max_overhang - OVERHANG_MARGIN {
+        bad.push(format!("overhang {:.0}° (limit {:.0}°)", overhang, max_overhang));
     }
     if sc.min_thickness < 0.8 {
         bad.push(format!("wall {:.2} mm", sc.min_thickness));
@@ -345,41 +429,74 @@ pub fn evaluate(p: &Project) -> Vec<String> {
         bad.push("top opening too small for the bulb".into());
     }
     let r_in0 = (0..72).map(|k| d.radii((k as f32 * 5.0).to_radians(), 0.0).0).fold(f32::INFINITY, f32::min);
-    if d.hole_d * 0.5 + d.ring_width + 3.0 > r_in0 {
+    if crate::geometry::spider_radii(d).1 + 3.0 > r_in0 {
         bad.push("mount ring too wide".into());
     }
-    let (bx, by, bz) = p.printer.volume();
-    if 2.0 * sc.max_r > bx.min(by) - 6.0 || d.height > bz - 2.0 {
+    let (bx, by, bz) = p.bed();
+    let tallest = crate::geometry::split_heights(d).into_iter().fold(0.0, f32::max);
+    if 2.0 * sc.max_r > bx.min(by) - 6.0 || tallest > bz - 2.0 {
         bad.push("does not fit the printer".into());
     }
-    bad
+    (bad, overhang)
+}
+
+/// Makes a design gentler: every shape feature that tilts the wall is scaled
+/// towards neutral by `f` (0..1), keeping the theme's character.
+fn soften(d: &mut Design, f: f32) {
+    let mean = d.spline.iter().sum::<f32>() / d.spline.len() as f32;
+    for r in &mut d.spline {
+        *r = mean + (*r - mean) * f;
+    }
+    d.r_top = d.r_bottom + (d.r_top - d.r_bottom) * f;
+    d.bulge *= f;
+    d.lobe_amp *= f;
+    d.lobe_growth = 1.0 + (d.lobe_growth - 1.0) * f;
+    d.meander_deg *= f;
+    d.wave_depth *= f;
+    d.rib_depth *= f;
+    d.rim_depth *= f;
+    d.poly_twist_deg *= f;
 }
 
 pub struct Generated {
     pub design: Design,
+    /// Candidates rolled.
     pub tries: u32,
     /// Remaining problems if no fully valid candidate was found.
     pub problems: Vec<String>,
 }
 
 /// Generates a design for `theme` from `seed`, keeping the project's mount,
-/// bulb, material and printer.
-pub fn generate(theme: Theme, seed: u64, p: &Project) -> Generated {
+/// bulb, material and printer. Candidates that are too steep are softened
+/// step by step before a new one is rolled.
+pub fn generate(theme: Theme, seed: u64, p: &Project, opts: &GenOptions) -> Generated {
+    const CANDIDATES: u32 = 80;
+    const SOFTEN_STEPS: usize = 8;
     let mut r = R(Rng::new(seed ^ 0xA5A5_1234_5678_9ABC));
     let mut best: Option<(Design, Vec<String>)> = None;
-    for k in 1..=60 {
-        let d = roll(theme, &mut r, &p.design);
-        let cand = Project { design: d.clone(), ..p.clone() };
-        let bad = evaluate(&cand);
-        if bad.is_empty() {
-            return Generated { design: d, tries: k, problems: bad };
-        }
-        if best.as_ref().map_or(true, |(_, b)| bad.len() < b.len()) {
-            best = Some((d, bad));
+    for k in 1..=CANDIDATES {
+        let mut d = roll(theme, &mut r, &p.design);
+        apply_size(&mut d, opts);
+        for step in 0..=SOFTEN_STEPS {
+            let cand = Project { design: d.clone(), ..p.clone() };
+            let (bad, overhang) = evaluate_scene(&cand, opts.max_overhang);
+            if bad.is_empty() {
+                return Generated { design: d, tries: k, problems: bad };
+            }
+            if best.as_ref().is_none_or(|(_, b)| bad.len() < b.len()) {
+                best = Some((d.clone(), bad.clone()));
+            }
+            // only softening can fix an overhang; other problems need a new roll
+            let only_overhang = bad.len() == 1 && overhang > opts.max_overhang - OVERHANG_MARGIN;
+            if !only_overhang || step == SOFTEN_STEPS {
+                break;
+            }
+            soften(&mut d, 0.8);
+            apply_size(&mut d, opts);
         }
     }
     let (design, problems) = best.expect("at least one candidate");
-    Generated { design, tries: 60, problems }
+    Generated { design, tries: CANDIDATES, problems }
 }
 
 #[cfg(test)]
@@ -392,7 +509,7 @@ mod tests {
         for theme in Theme::ALL {
             let mut ok = 0;
             for seed in 0..6u64 {
-                let g = generate(theme, seed, &p);
+                let g = generate(theme, seed, &p, &GenOptions::default());
                 if g.problems.is_empty() {
                     ok += 1;
                 }
@@ -407,6 +524,51 @@ mod tests {
     #[test]
     fn same_seed_same_design() {
         let p = Project::default();
-        assert_eq!(generate(Theme::Organic, 42, &p).design, generate(Theme::Organic, 42, &p).design);
+        let o = GenOptions::default();
+        assert_eq!(generate(Theme::Organic, 42, &p, &o).design, generate(Theme::Organic, 42, &p, &o).design);
+    }
+
+    /// Strict overhang limit and fixed height: every theme must still find
+    /// designs, at exactly that height, that stay below the limit on the
+    /// finer preview mesh too.
+    #[test]
+    fn respects_overhang_limit_and_fixed_height() {
+        let p = Project::default();
+        let opts = GenOptions { max_overhang: 35.0, height: Some(130.0), width: None };
+        for theme in Theme::ALL {
+            let mut ok = 0;
+            for seed in 0..4u64 {
+                let g = generate(theme, seed, &p, &opts);
+                assert_eq!(g.design.height, 130.0, "{}", theme.name());
+                if g.problems.is_empty() {
+                    ok += 1;
+                    let (nt, nz) = preview_res(&g.design, 1.0);
+                    let sc = scene::build(&g.design, &p.bulb, &p.lamp, nt, nz);
+                    assert!(sc.max_overhang <= opts.max_overhang + 0.5, "{} #{seed}: {:.1}°", theme.name(), sc.max_overhang);
+                }
+            }
+            assert!(ok >= 3, "{}: only {ok}/4 valid at 35°", theme.name());
+        }
+    }
+
+    /// Fixed width: the largest outer diameter must match within 0.5 mm,
+    /// also together with a height and an overhang limit.
+    #[test]
+    fn respects_fixed_width() {
+        let p = Project::default();
+        let opts = GenOptions { max_overhang: 40.0, height: Some(150.0), width: Some(140.0) };
+        for theme in Theme::ALL {
+            let mut ok = 0;
+            for seed in 0..3u64 {
+                let g = generate(theme, seed, &p, &opts);
+                let w = max_diameter(&g.design);
+                assert!((w - 140.0).abs() < 0.5, "{} #{seed}: Ø {w:.2}", theme.name());
+                assert_eq!(g.design.height, 150.0);
+                if g.problems.is_empty() {
+                    ok += 1;
+                }
+            }
+            assert!(ok >= 2, "{}: only {ok}/3 valid", theme.name());
+        }
     }
 }

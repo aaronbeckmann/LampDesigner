@@ -29,6 +29,8 @@ impl Default for Bulb {
     }
 }
 
+/// Table helper for the preset list below (one argument per column).
+#[allow(clippy::too_many_arguments)]
 fn b(name: &str, rx: f32, rz: f32, center_h: f32, lumens: f32, watts: f32, led: bool, cct: f32, cone: f32) -> Bulb {
     Bulb { name: name.into(), rx, rz, center_h, lumens, watts, led, cct, dark_cone_deg: cone }
 }

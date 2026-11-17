@@ -1,5 +1,5 @@
 //! Headless commands:
-//!   lampdesigner export   <project.json|default> <out.3mf> [--coarse]
+//!   lampdesigner export   <project.json|default> <out.3mf> [--coarse] [--split n|auto]
 //!   lampdesigner simulate [project.json] [--quality draft|normal|high|ultra]
 //!   lampdesigner render   <project.json|default> <out.png> [mode] [--quality q] [--size WxH]
 
@@ -41,11 +41,22 @@ pub fn run(args: &[String]) -> Option<i32> {
     match args.get(1).map(|s| s.as_str()) {
         Some("export") => {
             let Some(out) = args.get(3) else {
-                eprintln!("usage: lampdesigner export <project.json|default> <out.3mf> [--coarse]");
+                eprintln!("usage: lampdesigner export <project.json|default> <out.3mf> [--coarse] [--split n|auto]");
                 return Some(2);
             };
             let fine = !args.iter().any(|a| a == "--coarse");
-            let r = load(args.get(2)).and_then(|p| export_project(&p, Path::new(out), fine).map(|i| (p, i)));
+            let split = opt(args, "--split").map(str::to_owned);
+            let r = load(args.get(2)).and_then(|mut p| {
+                match split.as_deref() {
+                    Some("auto") => {
+                        p.design.split_parts = crate::geometry::split_parts_for(&p.design, p.bed().2)
+                            .ok_or("too tall for the printer even in 8 parts")?
+                    }
+                    Some(n) => p.design.split_parts = n.parse::<u32>().map_err(|e| format!("--split: {e}"))?.clamp(1, 8),
+                    None => {}
+                }
+                export_project(&p, Path::new(out), fine).map(|i| (p, i))
+            });
             match r {
                 Ok((p, info)) => {
                     println!(
@@ -55,6 +66,12 @@ pub fn run(args: &[String]) -> Option<i32> {
                         p.mass_g(info.volume_mm3),
                         p.material.props().name
                     );
+                    for pp in &info.part_paths {
+                        println!("wrote {}: upper shade part (glue onto the part below)", pp.display());
+                    }
+                    if let Some(i) = &info.insert_path {
+                        println!("wrote {}: glue-in mount insert (print normally, not in vase mode)", i.display());
+                    }
                     Some(0)
                 }
                 Err(e) => {
@@ -73,7 +90,7 @@ pub fn run(args: &[String]) -> Option<i32> {
             };
             let q = quality(args, Quality::Normal);
             let t0 = std::time::Instant::now();
-            let sc = crate::app::build_scene(&p, q);
+            let sc = crate::scene::build_for(&p, q);
             println!("scene: {} triangles in {:?} (quality {})", sc.mesh.tris.len(), t0.elapsed(), q.name());
             println!("bulb: {}", p.bulb.name);
             println!(
@@ -125,7 +142,7 @@ pub fn run(args: &[String]) -> Option<i32> {
                 .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
                 .unwrap_or((1280usize, 1440usize));
             let t0 = std::time::Instant::now();
-            let sc = crate::app::build_scene(&p, q);
+            let sc = crate::scene::build_for(&p, q);
             let op = Optics::new(p.material, p.color);
             let needs_sim = matches!(mode, ViewMode::Night | ViewMode::Temperature);
             let r = if needs_sim {
@@ -159,6 +176,80 @@ pub fn run(args: &[String]) -> Option<i32> {
                 }
             }
         }
+        Some("gpu-render") => {
+            // lampdesigner gpu-render <project> <out.png> [mode] [--size WxH] [--ssaa n]
+            let (Ok(p), Some(out)) = (load(args.get(2)), args.get(3)) else {
+                eprintln!("usage: lampdesigner gpu-render <project> <out.png> [shape|night|day|thickness|overhang|temperature] [--size WxH] [--ssaa n]");
+                return Some(2);
+            };
+            let mode = match args.get(4).map(|s| s.as_str()) {
+                Some("shape") => ViewMode::Shape,
+                Some("day") => ViewMode::Day,
+                Some("thickness") => ViewMode::Thickness,
+                Some("overhang") => ViewMode::Overhang,
+                Some("temperature") => ViewMode::Temperature,
+                _ => ViewMode::Night,
+            };
+            let (w, h) = opt(args, "--size")
+                .and_then(|s| s.split_once(['x', 'X']))
+                .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
+                .unwrap_or((800u32, 900u32));
+            let ssaa = opt(args, "--ssaa").and_then(|s| s.parse().ok()).unwrap_or(2u32);
+            let sc = std::sync::Arc::new(crate::scene::build_for(&p, Quality::Normal));
+            let op = Optics::new(p.material, p.color);
+            let needs_sim = matches!(mode, ViewMode::Night | ViewMode::Temperature);
+            let r = if needs_sim {
+                sim::run(&sc, &op, &p.bulb, 400_000, 140, &AtomicBool::new(false)).unwrap()
+            } else {
+                sim::SimResult::empty(&sc)
+            };
+            let exposure = crate::gpu::auto_exposure(&sc, &r, mode, if mode == ViewMode::Day { 200.0 } else { 3.0 }, &op);
+            let rs = RenderSettings {
+                mode,
+                room_lux: if mode == ViewMode::Day { 200.0 } else { 3.0 },
+                ev: 0.0,
+                show_room: true,
+                samples: 1,
+                clay: p.clay(),
+                // --clip y:0 (keeps the + side) or y:0:- (keeps the - side)
+                clip: opt(args, "--clip").and_then(|s| {
+                    let mut it = s.split(':');
+                    let axis = match it.next()? { "x" => 0, "y" => 1, "z" => 2, _ => return None };
+                    let pos = it.next()?.parse().ok()?;
+                    Some(render::Clip { axis, pos, keep_above: it.next() != Some("-") })
+                }),
+            };
+            let req = crate::gpu::Request {
+                scene: sc.clone(),
+                sim: std::sync::Arc::new(r),
+                params: crate::gpu::FrameParams {
+                    width: w,
+                    height: h,
+                    ssaa,
+                    cam: Camera::for_scene(&sc),
+                    rs,
+                    exposure,
+                    optics: op,
+                    bulb: p.bulb.clone(),
+                    hdt: p.material.props().hdt,
+                },
+            };
+            let t0 = std::time::Instant::now();
+            match crate::gpu::render_once(&req) {
+                Ok((rgba, adapter)) => {
+                    println!("{w}×{h} ssaa {ssaa} on {adapter}: {:?} (incl. device setup)", t0.elapsed());
+                    if let Err(e) = std::fs::write(out, crate::image_out::png(w as usize, h as usize, &rgba)) {
+                        eprintln!("error: {e}");
+                        return Some(1);
+                    }
+                    Some(0)
+                }
+                Err(e) => {
+                    eprintln!("GPU render failed: {e}");
+                    Some(1)
+                }
+            }
+        }
         Some("section") => {
             // lampdesigner section <project> <x|y|z> <pos> [out.png] [--keep-below]
             let axis = match args.get(3).map(|s| s.to_ascii_lowercase()) {
@@ -181,7 +272,7 @@ pub fn run(args: &[String]) -> Option<i32> {
                     return Some(1);
                 }
             };
-            let sc = crate::app::build_scene(&p, quality(args, Quality::High));
+            let sc = crate::scene::build_for(&p, quality(args, Quality::High));
             let s = crate::section::compute(&sc, axis, pos);
             for line in s.summary() {
                 println!("{line}");
@@ -229,11 +320,11 @@ pub fn run(args: &[String]) -> Option<i32> {
             Some(0)
         }
         Some("random") => {
-            // lampdesigner random <theme> <seed> [out.png] [--save project.json]
+            // lampdesigner random <theme> <seed> [out.png] [--save project.json] [--max-overhang deg] [--height mm] [--width mm]
             let theme = args.get(2).and_then(|s| crate::random::Theme::parse(s));
             let seed = args.get(3).and_then(|s| s.parse::<u64>().ok());
             let (Some(theme), Some(seed)) = (theme, seed) else {
-                eprintln!("usage: lampdesigner random <theme> <seed> [out.png] [--save project.json]");
+                eprintln!("usage: lampdesigner random <theme> <seed> [out.png] [--save project.json] [--max-overhang deg] [--height mm] [--width mm]");
                 eprintln!(
                     "themes: {}",
                     crate::random::Theme::ALL.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ")
@@ -241,13 +332,24 @@ pub fn run(args: &[String]) -> Option<i32> {
                 return Some(2);
             };
             let base = Project::default();
-            let g = crate::random::generate(theme, seed, &base);
+            let mut opts = crate::random::GenOptions::default();
+            if let Some(v) = opt(args, "--max-overhang").and_then(|s| s.parse::<f32>().ok()) {
+                opts.max_overhang = v.clamp(15.0, 70.0);
+            }
+            opts.height = opt(args, "--height").and_then(|s| s.parse::<f32>().ok()).map(|h| h.clamp(40.0, 300.0));
+            opts.width = opt(args, "--width").and_then(|s| s.parse::<f32>().ok()).map(|w| w.clamp(60.0, 400.0));
+            let g = crate::random::generate(theme, seed, &base, &opts);
             let p = Project { design: g.design, ..base };
+            let (nt, nz) = crate::geometry::preview_res(&p.design, 1.0);
+            let check = crate::scene::build(&p.design, &p.bulb, &p.lamp, nt, nz);
             println!(
-                "{} #{seed}: {} tries, {}",
+                "{} #{seed}: {} tries, {}  (height {:.0} mm, Ø {:.1} mm, overhang {:.1}°)",
                 theme.name(),
                 g.tries,
-                if g.problems.is_empty() { "valid".to_string() } else { g.problems.join(", ") }
+                if g.problems.is_empty() { "valid".to_string() } else { g.problems.join(", ") },
+                p.design.height,
+                crate::random::max_diameter(&p.design),
+                check.max_overhang
             );
             if let Some(path) = opt(args, "--save") {
                 if let Err(e) = p.save(Path::new(path)) {
@@ -256,7 +358,7 @@ pub fn run(args: &[String]) -> Option<i32> {
                 }
             }
             if let Some(out) = args.get(4).filter(|a| !a.starts_with("--")) {
-                let sc = crate::app::build_scene(&p, Quality::Normal);
+                let sc = crate::scene::build_for(&p, Quality::Normal);
                 let op = Optics::new(p.material, p.color);
                 let rs = RenderSettings {
                     mode: ViewMode::Shape,
@@ -288,11 +390,11 @@ pub fn run(args: &[String]) -> Option<i32> {
         }
         Some("--help") | Some("-h") => {
             println!("lampdesigner                 start the GUI");
-            println!("lampdesigner export <project.json|default> <out.3mf> [--coarse]");
+            println!("lampdesigner export <project.json|default> <out.3mf> [--coarse] [--split n|auto]");
             println!("lampdesigner simulate [project.json] [--quality draft|normal|high|ultra]");
             println!("lampdesigner render <project.json|default> <out.png> [shape|night|day|thickness|overhang|temperature]");
             println!("                    [--quality draft|normal|high|ultra] [--size WxH]");
-            println!("lampdesigner random <theme> <seed> [out.png] [--save project.json]");
+            println!("lampdesigner random <theme> <seed> [out.png] [--save project.json] [--max-overhang deg] [--height mm] [--width mm]");
             println!("lampdesigner section <project> <x|y|z> <pos mm> [out.png] [--keep-below]");
             Some(0)
         }

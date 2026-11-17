@@ -63,6 +63,16 @@ pub fn run(p: &Project, sc: &Scene, sim: &SimResult) -> Vec<(Level, String)> {
                     format!("Sleeve fit: hole is {:+.2} mm vs. socket Ø{:.1}. Use +0.2…+0.5 mm.", gap, p.lamp.socket_d),
                 ));
             }
+            if d.sleeve_height > p.lamp.height - 3.0 {
+                out.push((
+                    Level::Error,
+                    format!(
+                        "The {:.0} mm sleeve reaches the table (socket top is {:.0} mm above it).",
+                        d.sleeve_height, p.lamp.height
+                    ),
+                ));
+            }
+            sleeve_window_check(p, &mut out);
             if !d.ledge {
                 out.push((Level::Warn, "Sleeve has no ledge: only friction holds the shade on the socket.".into()));
             } else {
@@ -104,10 +114,28 @@ pub fn run(p: &Project, sc: &Scene, sim: &SimResult) -> Vec<(Level, String)> {
             }
         }
     }
+    if d.vase_mode {
+        let layers = (d.mount_thickness / 0.2).ceil() as u32;
+        out.push((
+            Level::Info,
+            if crate::geometry::has_insert(d) {
+                format!(
+                    "Vase mode: print the shade with Spiral vase (Bottom shell layers ≥ {layers} at 0.2 mm). \
+                     Print the mount insert (second 3MF) normally, flange down, then push it up into the ring and glue the flange to the ring."
+                )
+            } else {
+                format!("Vase mode: the ring and spokes print as the bottom layers (Bottom shell layers ≥ {layers} at 0.2 mm).")
+            },
+        ));
+        out.push((
+            Level::Info,
+            "Vase mode prints one wall line: the wall-thickness setting and the inner relief are not printed.".into(),
+        ));
+    }
     let r_inner0 = (0..360)
         .map(|k| d.radii((k as f32).to_radians(), 0.0).0)
         .fold(f32::INFINITY, f32::min);
-    if d.hole_d * 0.5 + d.ring_width + 2.0 > r_inner0 {
+    if crate::geometry::spider_radii(d).1 + 2.0 > r_inner0 {
         out.push((Level::Error, "Mount ring is wider than the shade's bottom opening.".into()));
     }
     if sim.stats.mount_temp > mat.hdt - 5.0 {
@@ -164,13 +192,117 @@ pub fn run(p: &Project, sc: &Scene, sim: &SimResult) -> Vec<(Level, String)> {
     } else {
         out.push((Level::Ok, format!("Max overhang {:.0}°: prints without supports.", sc.max_overhang)));
     }
-    let (bx, by, bz) = p.printer.volume();
+    fit_checks(p, sc, &mut out);
+    out
+}
+
+/// Bed size and the split into parts along the height.
+fn fit_checks(p: &Project, sc: &Scene, out: &mut Vec<(Level, String)>) {
+    use crate::geometry::{ledge_top, split_cuts, split_has_joint, split_heights, split_parts_for};
+    let d = &p.design;
+    let (bx, by, bz) = p.bed();
+    let name = p.printer.name();
     let dia = 2.0 * sc.max_r;
-    if dia > bx.min(by) - 4.0 || d.height > bz - 2.0 {
+    if !crate::project::fits((bx, by, bz), dia, 0.0).0 {
+        let fitting: Vec<&str> = Project::printers_fitting(dia).iter().map(|p| p.name()).collect();
+        let hint = if fitting.is_empty() {
+            "No preset bed is that big: make the shade narrower.".to_string()
+        } else {
+            format!("Make it narrower, or pick a larger printer: {}.", fitting.join(", "))
+        };
+        out.push((Level::Error, format!("Ø{dia:.0} mm is wider than the {name} bed ({bx:.0} × {by:.0} mm). {hint}")));
+    }
+    let heights = split_heights(d);
+    let tallest = heights.iter().cloned().fold(0.0, f32::max);
+    if tallest > bz - 2.0 {
+        let msg = match split_parts_for(d, bz) {
+            Some(n) => format!(
+                "{:.0} mm{} is taller than the {name} ({bz:.0} mm). Split it into {n} parts under Printer & split.",
+                tallest,
+                if heights.len() > 1 { " (tallest part)" } else { "" }
+            ),
+            None => format!("Too tall for the {name} ({bz:.0} mm) even in 8 parts."),
+        };
+        out.push((Level::Error, msg));
+    } else if heights.len() > 1 {
+        let cuts: Vec<String> = split_cuts(d).iter().map(|c| format!("{:.0}", c * d.height)).collect();
+        let hs: Vec<String> = heights.iter().map(|h| format!("{h:.0}")).collect();
         out.push((
-            Level::Error,
-            format!("Doesn't fit {} ({:.0} × {:.0} mm vs. {:.0} × {:.0} mm).", p.printer.name(), dia, d.height, bx.min(by), bz),
+            Level::Info,
+            format!(
+                "Printed in {} parts, cut at {} mm above the bottom (part heights {} mm). Each part is its own 3MF; {}.",
+                heights.len(),
+                cuts.join(" / "),
+                hs.join(" / "),
+                if split_has_joint(d) {
+                    "the upper part's skirt slides over the lower part's lip: glue the overlap (CA or epoxy)"
+                } else {
+                    "glue the flat joints"
+                }
+            ),
         ));
     }
-    out
+    if heights.len() > 1 {
+        let cuts = split_cuts(d);
+        let z0 = d.z0();
+        let first = z0 + cuts[0] * d.height;
+        let mount_top = ledge_top(d).max(z0 + d.mount_thickness);
+        if first < mount_top + 3.0 {
+            out.push((Level::Error, "The lowest cut runs through the mount: use fewer parts.".into()));
+        }
+        let lip_top = cuts[cuts.len() - 1] * d.height + if split_has_joint(d) { d.split_overlap + 2.0 } else { 0.0 };
+        let rim_low = d.height - if d.rim_waves > 0 { d.rim_depth.min(d.height * 0.5) } else { 0.0 };
+        if lip_top > rim_low - 5.0 {
+            out.push((Level::Error, "The top cut is too close to the wavy rim: use fewer parts.".into()));
+        }
+        if split_has_joint(d) {
+            // thinnest half wall at a cut
+            let half = cuts
+                .iter()
+                .flat_map(|&c| (0..90).map(move |k| (k as f32 * 4.0f32).to_radians()).map(move |th| (th, c)))
+                .map(|(th, c)| {
+                    let (i, o) = d.radii(th, c);
+                    (o - i) * 0.5 - d.split_gap * 0.5
+                })
+                .fold(f32::INFINITY, f32::min);
+            if half < 0.8 {
+                out.push((
+                    Level::Warn,
+                    format!(
+                        "The joint halves the wall to {half:.2} mm at the cuts (one line or less). Use a thicker wall (≥ 2 mm) or a flat joint."
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Weight-saving sleeve windows: how much they save, or why there are none.
+fn sleeve_window_check(p: &Project, out: &mut Vec<(Level, String)>) {
+    use crate::geometry::{build_insert, build_mount};
+    let d = &p.design;
+    if d.sleeve_windows < 2 {
+        return;
+    }
+    let sleeve = |d: &crate::design::Design| -> (usize, f64) {
+        let parts = match build_insert(d, 240) {
+            Some(insert) => insert,
+            None => build_mount(d, 240).split_off(1),
+        };
+        (parts.len(), parts.iter().map(|m| m.volume()).sum())
+    };
+    let solid = crate::design::Design { sleeve_windows: 0, ..d.clone() };
+    let (n, v) = sleeve(d);
+    if n == 1 {
+        out.push((
+            Level::Info,
+            format!(
+                "Sleeve windows need more height or fewer, narrower struts: the {:.0} mm sleeve stays solid.",
+                d.sleeve_height
+            ),
+        ));
+        return;
+    }
+    let saved = p.mass_g(sleeve(&solid).1 - v);
+    out.push((Level::Ok, format!("Sleeve windows: {} struts, saves ≈ {saved:.0} g.", d.sleeve_windows)));
 }

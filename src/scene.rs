@@ -4,7 +4,7 @@
 use crate::bulb::Bulb;
 use crate::bvh::Bvh;
 use crate::design::{Design, MountKind};
-use crate::geometry::{apply_rim, build_mount, lamp_proxy, shell_rows, LampBase};
+use crate::geometry::{apply_rim, build_insert, build_mount, lamp_proxy, shell_rows, LampBase};
 use crate::mesh::{tube, Mesh, Tag};
 use glam::Vec3;
 
@@ -73,7 +73,8 @@ pub fn build(d: &Design, bulb: &Bulb, lamp: &LampBase, nt: usize, nz: usize) -> 
     let mut mesh = Mesh::default();
     mesh.append(&shell);
     let grid = Grid { nt, nz, outer0: 0, inner0: nt * nz };
-    for m in build_mount(d, 720) {
+    // the vase-mode insert is printed separately but sits in the lamp: show and count it
+    for m in build_mount(d, 720).into_iter().chain(build_insert(d, 720).into_iter().flatten()) {
         volume += m.volume();
         mesh.append(&m);
     }
@@ -136,7 +137,7 @@ pub fn build(d: &Design, bulb: &Bulb, lamp: &LampBase, nt: usize, nz: usize) -> 
             min_t = min_t.min(tn);
             max_t = max_t.max(tn);
 
-            let oh = |n: Vec3| (-n.z).max(0.0).min(1.0).asin().to_degrees();
+            let oh = |n: Vec3| (-n.z).clamp(0.0, 1.0).asin().to_degrees();
             let o = if iz == 0 { 0.0 } else { oh(n_o).max(oh(n_i)) };
             overhang[grid.o(iz, it)] = o;
             overhang[grid.i(iz, it)] = o;
@@ -243,4 +244,10 @@ impl Scene {
         let t = self.mesh.tris[tri];
         data[t[0] as usize] * (1.0 - u - v) + data[t[1] as usize] * u + data[t[2] as usize] * v
     }
+}
+
+/// The preview/simulation scene of a project at a quality level.
+pub fn build_for(p: &crate::project::Project, q: crate::quality::Quality) -> Scene {
+    let (nt, nz) = crate::geometry::preview_res(&p.design, q.mesh_scale());
+    build(&p.design, &p.bulb, &p.lamp, nt, nz)
 }

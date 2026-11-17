@@ -107,6 +107,13 @@ pub struct Design {
     pub ring_width: f32,
     pub mount_thickness: f32,
     pub sleeve_height: f32,
+    /// Weight saving for tall sleeves: this many struts with windows between
+    /// them (0 = solid sleeve). Window tops are 45° points (no supports).
+    pub sleeve_windows: u32,
+    /// Width of a strut (arc length at the sleeve's outside).
+    pub sleeve_strut_w: f32,
+    /// Solid sleeve kept at the bottom and the top (around the ledge).
+    pub sleeve_band: f32,
     /// Sleeve only: inward ledge at the top of the sleeve that rests on the
     /// socket's top rim so the shade can't slide down.
     pub ledge: bool,
@@ -116,6 +123,27 @@ pub struct Design {
     pub ledge_h: f32,
     /// 45° chamfer under the ledge so it prints without supports.
     pub ledge_chamfer: bool,
+    /// Spiral-vase print: the shade keeps only ring + spokes in its bottom
+    /// layers; the socket sleeve becomes a separate insert that is pushed up
+    /// into the ring from below and glued (sleeve mount only).
+    pub vase_mode: bool,
+    /// Diametral clearance between the insert's sleeve and the ring hole (glue gap).
+    pub glue_gap: f32,
+    /// How far the insert's glue flange reaches past the ring hole (radial).
+    pub glue_ledge_width: f32,
+    /// Thickness of the insert's glue flange.
+    pub glue_ledge_h: f32,
+    /// Print the shade in this many parts stacked along the height (1 = one
+    /// piece), for shades taller than the printer. Cuts are evenly spaced.
+    pub split_parts: u32,
+    /// Overlapping (rabbet) joint at each cut: the lower part carries the
+    /// inner half of the wall up as a lip, the upper part the outer half
+    /// down over it. Off = flat butt joint.
+    pub split_joint: bool,
+    /// Height of the overlap at a cut.
+    pub split_overlap: f32,
+    /// Radial clearance in the joint (glue gap).
+    pub split_gap: f32,
     pub spokes: u32,
     pub spoke_width: f32,
 }
@@ -158,13 +186,24 @@ impl Default for Design {
             // IKEA GENNAKER: sleeve over the socket with a ledge on its top rim
             mount: MountKind::Sleeve,
             hole_d: 42.75,
-            ring_width: 4.0,
+            ring_width: 2.0,
             mount_thickness: 2.0,
             sleeve_height: 12.0,
+            sleeve_windows: 0,
+            sleeve_strut_w: 5.0,
+            sleeve_band: 6.0,
             ledge: true,
             ledge_d: 33.0,
-            ledge_h: 3.0,
+            ledge_h: 2.0,
             ledge_chamfer: true,
+            vase_mode: false,
+            glue_gap: 0.4,
+            glue_ledge_width: 4.0,
+            glue_ledge_h: 1.6,
+            split_parts: 1,
+            split_joint: true,
+            split_overlap: 6.0,
+            split_gap: 0.15,
             spokes: 3,
             spoke_width: 6.0,
         }
@@ -195,6 +234,8 @@ impl Design {
     pub fn z0(&self) -> f32 {
         match self.mount {
             MountKind::FlatRing => 0.0,
+            // vase mode: the shade's ring rests on the insert's glue flange
+            MountKind::Sleeve if self.vase_mode => -self.sleeve_height + self.glue_ledge_h,
             MountKind::Sleeve => -self.sleeve_height,
         }
     }
@@ -324,7 +365,7 @@ impl Design {
     }
 
     pub fn sanitize(&mut self) {
-        self.height = self.height.clamp(20.0, 400.0);
+        self.height = self.height.clamp(20.0, 800.0);
         self.r_bottom = self.r_bottom.clamp(15.0, 200.0);
         self.r_top = self.r_top.clamp(15.0, 200.0);
         for r in &mut self.spline {
@@ -335,11 +376,21 @@ impl Design {
         self.hole_d = self.hole_d.clamp(10.0, 80.0);
         self.ring_width = self.ring_width.clamp(2.0, 40.0);
         self.mount_thickness = self.mount_thickness.clamp(0.6, 6.0);
-        self.sleeve_height = self.sleeve_height.clamp(3.0, 60.0);
+        self.sleeve_height = self.sleeve_height.clamp(3.0, 150.0);
+        self.sleeve_windows = self.sleeve_windows.min(16);
+        self.sleeve_strut_w = self.sleeve_strut_w.clamp(2.0, 20.0);
+        self.sleeve_band = self.sleeve_band.clamp(2.0, 30.0);
         if self.mount == MountKind::Sleeve {
             self.ledge_d = self.ledge_d.clamp(20.0, (self.hole_d - 1.0).max(20.0));
         }
         self.ledge_h = self.ledge_h.clamp(0.8, 10.0);
+        self.glue_gap = self.glue_gap.clamp(0.0, 2.0);
+        self.glue_ledge_width = self.glue_ledge_width.clamp(1.0, 15.0);
+        self.glue_ledge_h = self.glue_ledge_h.clamp(0.6, 5.0);
+        self.sleeve_height = self.sleeve_height.max(self.glue_ledge_h + 2.0);
+        self.split_parts = self.split_parts.clamp(1, 8);
+        self.split_overlap = self.split_overlap.clamp(2.0, 20.0);
+        self.split_gap = self.split_gap.clamp(0.0, 0.6);
         self.spoke_width = self.spoke_width.clamp(2.0, 30.0);
         self.bulge_pos = self.bulge_pos.clamp(0.05, 0.95);
         self.lobe_growth = self.lobe_growth.clamp(0.0, 5.0);

@@ -143,7 +143,7 @@ impl Rng {
     pub fn new(seed: u64) -> Rng {
         Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03)
     }
-    pub fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -151,7 +151,7 @@ impl Rng {
         z ^ (z >> 31)
     }
     pub fn f(&mut self) -> f32 {
-        (self.next() >> 40) as f32 * (1.0 / (1u64 << 24) as f32)
+        (self.next_u64() >> 40) as f32 * (1.0 / (1u64 << 24) as f32)
     }
 }
 
@@ -478,9 +478,9 @@ pub fn run(
         })
         .collect();
     let mut e_in = vec![Vec3::ZERO; nv];
-    for v in 0..nv {
-        if acc.vflux[v] != Vec3::ZERO && sc.varea[v] > 0.0 {
-            e_in[v] = acc.vflux[v] * (per / (sc.varea[v] * 1e-6));
+    for ((e, &flux), &area) in e_in.iter_mut().zip(&acc.vflux).zip(&sc.varea) {
+        if flux != Vec3::ZERO && area > 0.0 {
+            *e = flux * (per / (area * 1e-6));
         }
     }
     // Indirect light is smooth; keep the same physical smoothing on finer
@@ -540,9 +540,9 @@ pub fn run(
     }
     let clamps_cap = sc.mount_hole_r < 17.0;
     let mount_temp = if clamps_cap { bulb.cap_temp() } else { AMBIENT_C + 0.5 * (bulb.cap_temp() - AMBIENT_C) };
-    for v in nshell..nv {
-        if sc.mesh.pos[v].z >= sc.shade_z0 - 0.01 && sc.mesh.pos[v].z <= sc.shade_z0 + 60.0 {
-            temp[v] = mount_temp;
+    for (t, p) in temp.iter_mut().zip(&sc.mesh.pos).skip(nshell) {
+        if p.z >= sc.shade_z0 - 0.01 && p.z <= sc.shade_z0 + 60.0 {
+            *t = mount_temp;
         }
     }
 

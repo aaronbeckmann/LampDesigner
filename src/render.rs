@@ -23,7 +23,7 @@ pub enum ViewMode {
     Temperature,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
     pub yaw: f32,
     pub pitch: f32,
@@ -51,7 +51,7 @@ impl Camera {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderSettings {
     pub mode: ViewMode,
     /// Ambient room illuminance (lux).

@@ -1,23 +1,40 @@
 [package]
 name = "lampdesigner"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Parametric 3D-printable lampshade designer with light simulation and 3MF export"
 license = "MIT"
 repository = "https://github.com/aaronbeckmann/LampDesigner"
 
 [dependencies]
-eframe = "0.31"
+# UI: Rune (GPU-rendered, retained). Pre-release and git-only: keep `rev` in step with the
+# patches below (Rune's root Cargo.toml lists them).
+rune = { git = "https://github.com/anomalyco/rune", rev = "3d037b49e459cd45d9438a46d50be3b20d53542a", features = ["native-file-dialog"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "3d037b49e459cd45d9438a46d50be3b20d53542a" }
+# The 3D view renders on its own wgpu device (same major version as Rune's).
+wgpu = "30"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
 glam = "0.29"
 rayon = "1.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 flate2 = "1"
 
+# Rune patches these crates in its own workspace; a dependency's [patch] doesn't apply to the
+# app that depends on it, so the app repeats them at the same revision.
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "3d037b49e459cd45d9438a46d50be3b20d53542a" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "3d037b49e459cd45d9438a46d50be3b20d53542a" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "3d037b49e459cd45d9438a46d50be3b20d53542a" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "3d037b49e459cd45d9438a46d50be3b20d53542a" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "3d037b49e459cd45d9438a46d50be3b20d53542a" }
+
 [profile.dev]
 opt-level = 1
+# Rune's own advice: full debug info for a Rune app is very large
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3

@@ -2,7 +2,7 @@
 // Command-line use: `lampdesigner-cli`, or `start.ps1 <command>`.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-fn main() -> eframe::Result<()> {
+fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
         // CLI arguments given to the windowed exe: print into the calling console if there is one
@@ -11,7 +11,7 @@ fn main() -> eframe::Result<()> {
             std::process::exit(code);
         }
     }
-    lampdesigner::run_gui()
+    lampdesigner::run_gui();
 }
 
 #[cfg(windows)]
